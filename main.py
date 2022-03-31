@@ -1,5 +1,8 @@
-import socket
 import logging
+import selectors
+import socket
+import sys
+import types
 
 if __name__ == "__main__":
     logging.basicConfig(
@@ -9,15 +12,56 @@ if __name__ == "__main__":
     )
     logging.info("Starting server...")
 
-    HOST = '0.0.0.0'          # Symbolic name meaning all available interfaces
-    PORT = 50007              # Arbitrary non-privileged port
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind((HOST, PORT))
-        s.listen(1)
-        conn, addr = s.accept()
-        with conn:
-            logging.info(f"Connected by {addr}")
-            while True:
-                data = conn.recv(1024)
-                if not data: break
-                conn.sendall(data)
+    sel = selectors.DefaultSelector()
+
+    def accept_wrapper(sock):
+        conn, addr = sock.accept()  # Should be ready to read
+        logging.info(f"Accepted connection from {addr}")
+        conn.setblocking(False)
+        data = types.SimpleNamespace(addr=addr, inb=b"", outb=b"")
+        events = selectors.EVENT_READ | selectors.EVENT_WRITE
+        sel.register(conn, events, data=data)
+
+
+    def service_connection(key, mask):
+        sock = key.fileobj
+        data = key.data
+        if mask & selectors.EVENT_READ:
+            recv_data = sock.recv(1024)  # Should be ready to read
+            if recv_data:
+                data.outb += recv_data
+            else:
+                logging.info(f"Closing connection to {data.addr}")
+                sel.unregister(sock)
+                sock.close()
+        if mask & selectors.EVENT_WRITE:
+            if data.outb:
+                logging.info(f"Echoing {data.outb!r} to {data.addr}")
+                sent = sock.send(data.outb)  # Should be ready to write
+                data.outb = data.outb[sent:]
+
+
+    if len(sys.argv) != 3:
+        logging.info(f"Usage: {sys.argv[0]} <host> <port>")
+        sys.exit(1)
+
+    host, port = sys.argv[1], int(sys.argv[2])
+    lsock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    lsock.bind((host, port))
+    lsock.listen()
+    logging.info(f"Listening on {(host, port)}")
+    lsock.setblocking(False)
+    sel.register(lsock, selectors.EVENT_READ, data=None)
+
+    try:
+        while True:
+            events = sel.select(timeout=None)
+            for key, mask in events:
+                if key.data is None:
+                    accept_wrapper(key.fileobj)
+                else:
+                    service_connection(key, mask)
+    except KeyboardInterrupt:
+        logging.info("Caught keyboard interrupt, exiting")
+    finally:
+        sel.close()
