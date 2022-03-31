@@ -5,4 +5,5 @@ RUN apt update && \
 WORKDIR /app
 COPY . .
 EXPOSE 50007
+CMD ["0.0.0.0", "50007"]
 ENTRYPOINT ["python", "main.py"]

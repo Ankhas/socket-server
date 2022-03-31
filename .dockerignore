@@ -4,10 +4,10 @@ __pycache__/
 *$py.class
 
 # Environments
-.env
-.venv
-env/
 venv/
+.venv/
+.env
+.env.default
 
 # IDE
 .idea/
